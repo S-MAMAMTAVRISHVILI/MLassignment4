@@ -18,7 +18,7 @@
 
 დავალების მთავარი მიზანია **იტერაციული, კარგად გაანალიზებული კვლევა** — და არა პირდაპირი მაღალი შედეგი.
 ამიტომ მუშაობა დავიწყე პატარა იმპლემენტაციით და ეტაპობრივად დავამატე სიღრმე/რეგულარიზაცია, თითოეული
-გადაწყვეტილების დასაბუთებით. პროცესი სამ ფაზად განვითარდა:
+გადაწყვეტილების დასაბუთებით. პროცესი ოთხ ფაზად განვითარდა:
 
 1. **ფაზა 1 — საბაზისო (SimpleCNN)**: მცირე 2-ბლოკიანი CNN, რეგულარიზაციის გარეშე, რათა
    ამეწყო სრული pipeline + W&B logging და თვალსაჩინოდ გამოჩენილიყო **overfitting**-ის სურათი.
@@ -26,6 +26,8 @@
    რათა გამქრალიყო ფაზა 1-ის train/val სხვაობა; ablation-ებით გაიზომა თითოეული კომპონენტის წვლილი.
 3. **ფაზა 3 — ResNet-18**: residual კავშირები, რათა სიღრმეზე ვარჯიში შესაძლებელი გამხდარიყო; მთავარი
    ablation = residual ჩართ./გამორთ. *იგივე* ღრმა ქსელზე.
+4. **ფაზა 4 — MobileNet-style CNN**: depthwise-separable კონვოლუციები — სრულად განსხვავებული,
+   ეფექტური building block; კითხვა: რამდენად ახლოს მივა VGG-სთან **~72× ნაკლები პარამეტრით**.
 
 ყველა ექსპერიმენტი დაილოგა **Weights & Biases**-ზე  ლოგიკით : project → group → run.
 
@@ -37,7 +39,8 @@ MLassignment4/
 └── notebooks/
     ├── 01_baseline_simple_cnn.ipynb       # SimpleCNN baseline + LR sweep + რეგულარიზაციის probe
     ├── 02_vgg_style_cnn.ipynb             # VGG-style CNN + 3 ablation
-    └── 03_resnet_cnn.ipynb                # ResNet-18 + residual/label-smoothing ablation
+    ├── 03_resnet_cnn.ipynb                # ResNet-18 + residual/label-smoothing ablation
+    └── 04_mobilenet_cnn.ipynb             # MobileNet-style (depthwise-separable) + width ablation
 ```
 
 ### ფაილების განმარტება
@@ -49,6 +52,8 @@ MLassignment4/
   LR scheduler-ითა და early stopping-ით. 3 ablation: augmentation off, regularization off, class-weighted loss.
 - **`03_resnet_cnn.ipynb`** — `ResNet-18` განლაგების ქსელი residual ბლოკებით. 2 ablation:
   residual off (იგივე ქსელი skip-კავშირის გარეშე) და label smoothing.
+- **`04_mobilenet_cnn.ipynb`** — MobileNet-style `MobileNetMini` depthwise-separable კონვოლუციებით
+  (~48.5k პარამეტრი). 1 ablation: `width_mult=0.5` (accuracy/size trade-off).
 
 ---
 
@@ -104,6 +109,8 @@ MLassignment4/
 | 10 | **ResNet-18** residual (40ep, stop 33) | 0.774 | 0.679 | **0.685** | 0.095 | გლუვი ვარჯიში ეპოქა 1-დან; residual-ი მუშაობს, მაგრამ VGG-ს ვერ ჯობნის. |
 | 11 | ResNet-18 no-residual (25ep) | 0.624 | 0.607 | 0.614 | ~0.02 | **degradation problem** — ოპტიმიზაცია იჭედება (~0.27 acc 3 ეპოქა), რთული კლასები იშლება (Disgust recall→0.13). |
 | 12 | ResNet-18 label-smoothing 0.1 (25ep) | — | 0.640 | 0.655 | — | მიაღწია ლიმიტს *ისევ მზარდი*. |
+| 13 | **MobileNet** full (depthwise-separable, ~48.5k params) | 0.592 | 0.586 | 0.605 | **0.006** | **ყველაზე ეფექტური** — VGG-ის ~87% სიზუსტე ~72× ნაკლები პარამეტრით; gap ≈ 0 (ოდნავ underfit). |
+| 14 | MobileNet width 0.5 (~4× პატარა) | — | — | 0.510 | — | accuracy/size trade-off — ჩანელების განახევრება აკლებს 9.5 ქულას. |
 
 ### Overfit / Underfit ანალიზი
 
@@ -111,6 +118,8 @@ MLassignment4/
   capacity ბევრია, რეგულარიზაცია არ არის, ამიტომ მოდელი იზეპირებს.
 - **მკვეთრი Underfit**: `SimpleCNN lr 1e-2` (არ კონვერგირდება) და `ResNet no-residual`
   (skip-კავშირის გარეშე ღრმა ქსელი ვერ ვარჯიშდება — vanishing/degradation).
+- **ტევადობით შეზღუდული (capacity-limited)**: `MobileNet` — gap ≈ 0.006, train≈val≈0.59, ანუ არ
+  იზეპირებს, უბრალოდ პატარაა; შემზღუდველი მისი ზომაა და არა რეგულარიზაცია.
 - **კარგი ბალანსი**: `VGG-CNN full` (gap 0.054) და `ResNet residual` (gap 0.095).
 
 ### Forward / Backward შემოწმებები
@@ -142,8 +151,9 @@ LR sweep ცხადად აჩვენებს ე.წ. „ზარის
 | არქიტექტურა | პარამეტრები | საუკეთესო val | **PrivateTest** | gap |
 |---|---|---|---|---|
 | SimpleCNN (NB01) | 1.2M | 0.549 | 0.529 | 0.477 |
-| **VGG-CNN (NB02)** | 3.5M | 0.688 | **0.696** ⬅ საუკეთესო | 0.054 |
+| **VGG-CNN (NB02)** | 3.5M | 0.688 | **0.696** ⬅ საუკეთესო შედეგი | 0.054 |
 | ResNet-18 (NB03) | 11.2M | 0.679 | 0.685 | 0.095 |
+| MobileNet (NB04) | **48.5k** | 0.586 | 0.605 | 0.006 |
 
 დასკვნები:
 
@@ -153,7 +163,11 @@ LR sweep ცხადად აჩვენებს ე.წ. „ზარის
    მათ გარეშე ოპტიმიზაცია ცხადად ფერხდება.
 3. **დიდი ≠ უკეთესი** — ResNet-18 (11M) **ვერ ჯობნის** VGG-CNN-ს (3.5M) და ოდნავ მეტად overfit-დება.
    FER2013-ზე VGG-ის მასშტაბის ზემოთ ტევადობა აღარ აუმჯობესებს შედეგს; ლიმიტი არის **მონაცემების/ლეიბლების
-   გარჩევადობა**, და არა მოდელის ზომა. სამივე ქსელი ჩერდება იმავე Fear/Sad/Neutral ემოციების არევისას.
+   გარჩევადობა**, და არა მოდელის ზომა. ოთხივე ქსელი ჩერდება იმავე Fear/Sad/Neutral ემოციების არევისას.
+4. **პატარა ≠ უსარგებლო** — MobileNet (48.5k პარამეტრი, **~72× ნაკლები**) აღწევს 0.605-ს, ანუ VGG-ის
+   სიზუსტის **~87%**-ს. ეს ადასტურებს იმავე დასკვნას მეორე მხრიდან: რაკი ზედა ზღვარს მონაცემები აწესებენ,
+   ეფექტურ პატარა ქსელსაც მცირე გეფით შეუძლია იქამდე მიღწევა. cost — Disgust-ის recall ეცემა 0.13-მდე
+   (ტევადობით შეზღუდული მოდელი ივიწყებს იშვიათ კლასს).
 
 ---
 
@@ -169,6 +183,7 @@ W&B Project: https://wandb.ai/smama23-free-university-of-tbilisi-/fer2013-emotio
   - `SimpleCNN` — 5 run (`SimpleCNN-baseline-lr0.001-bs64`, `SimpleCNN-lr0.01-bs64`, `SimpleCNN-lr0.001-bs64`, `SimpleCNN-lr0.0001-bs64`, `SimpleCNN-reg-dropout0.5-wd1e-4`).
   - `VGG-CNN` — 4 run (`VGG-CNN-full-lr0.001-bs64`, `VGG-CNN-noaug`, `VGG-CNN-noreg`, `VGG-CNN-classweights`).
   - `ResNet-CNN` — 3 run (`ResNet-residual-lr0.001-bs64`, `ResNet-noresidual`, `ResNet-labelsmooth`).
+  - `MobileNet-CNN` — 2 run (`MobileNet-full-lr0.001-bs64`, `MobileNet-width0.5`).
 - **Run** = ერთი ჰიპერპარამეტრების კონფიგურაცია.
 
 ### ჩაწერილი მეტრიკების აღწერა
